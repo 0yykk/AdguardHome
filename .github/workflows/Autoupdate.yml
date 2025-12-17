@@ -2,46 +2,48 @@ name: Autoupdate
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # 每天凌晨 0 点运行
   push:
     branches:
       - "main"
+  workflow_dispatch: # 允许你手动点击运行，方便调试
 
 jobs:
   update-dns-lists:
     runs-on: ubuntu-latest
+    permissions: # 显式声明需要写入权限
+      contents: write
+      
     steps:
       - name: checkout actions
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4 # 升级到 v4
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5 # 升级到 v5
         with:
           python-version: '3.10'
 
       - name: Update domain list
         working-directory: ./AutoUpdate
         run: |
-          # Clean up existing files
+          # 1. 清理旧文件
           rm -f accelerated-domains.china.conf CNDomains_AdguardHome.txt \
               gfwlist.txt gfwlist_decode.txt gfwlist2dnsmasq.sh \
               gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt
 
-          # Download required source files
+          # 2. 下载最新源
           wget https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
           wget https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
           wget https://raw.githubusercontent.com/cokebar/gfwlist2dnsmasq/master/gfwlist2dnsmasq.sh
 
-          # Decode gfwlist base64 content
+          # 3. 处理数据
           base64 -d gfwlist.txt > gfwlist_decode.txt
-
-          # Process domain lists
           python domain_list_converter.py china accelerated-domains.china.conf
           chmod +x gfwlist2dnsmasq.sh
           ./gfwlist2dnsmasq.sh -o ./gfwlist_dnsmasq.conf
           python domain_list_converter.py gfw gfwlist_dnsmasq.conf
 
-          # Create final configuration file
+          # 4. 合并生成
           {
             echo "# Create Date: $(date +"%Y-%m-%d %H:%M:%S")"
             cat upstreams.txt
@@ -50,29 +52,24 @@ jobs:
             cat CNDomains_AdguardHome.txt
           } > dns_upstream_merged.txt
 
-          # Copy final configuration to target locations
+          # 5. 覆盖到仓库根目录
           cp dns_upstream_merged.txt ../AdguardHome_Upstreams_Autoupdate.txt
           cp dns_upstream_merged.txt ../AdguardHome_Upstreams_Autoupdate.yaml
 
-          # Clean up
+          # 6. 二次清理
           rm -f accelerated-domains.china.conf CNDomains_AdguardHome.txt \
               gfwlist.txt gfwlist_decode.txt gfwlist2dnsmasq.sh \
               gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt
 
-      - name: commit
-        env:
-          GIT_NAME: github-actions[bot]
-          GIT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          REPO: github.com/rwx9032/AdguardHome
-          GH_TOKEN: ${{ secrets.GH_TOKEN_BLOG }}
+      - name: Commit and Push
         run: |
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
-          git commit -m "autoupdate" -a
-
-      - name: Push changes
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: ${{ github.ref }}
+          # 只有在有变化时才 commit，避免没有更新时报错
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-update DNS list: $(date +'%Y-%m-%d')"
+            git push
+          fi
