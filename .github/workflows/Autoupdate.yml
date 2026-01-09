@@ -6,20 +6,20 @@ on:
   push:
     branches:
       - "main"
-  workflow_dispatch: # 允许你手动点击运行，方便调试
+  workflow_dispatch: 
 
 jobs:
   update-dns-lists:
     runs-on: ubuntu-latest
-    permissions: # 显式声明需要写入权限
+    permissions:
       contents: write
       
     steps:
       - name: checkout actions
-        uses: actions/checkout@v4 # 升级到 v4
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5 # 升级到 v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -29,7 +29,8 @@ jobs:
           # 1. 清理旧文件
           rm -f accelerated-domains.china.conf CNDomains_AdguardHome.txt \
               gfwlist.txt gfwlist_decode.txt gfwlist2dnsmasq.sh \
-              gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt
+              gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt \
+              mosdns_china_list.txt
 
           # 2. 下载最新源
           wget https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
@@ -43,7 +44,7 @@ jobs:
           ./gfwlist2dnsmasq.sh -o ./gfwlist_dnsmasq.conf
           python domain_list_converter.py gfw gfwlist_dnsmasq.conf
 
-          # 4. 合并生成
+          # 4. 合并生成 AdGuardHome 格式
           {
             echo "# Create Date: $(date +"%Y-%m-%d %H:%M:%S")"
             cat upstreams.txt
@@ -52,21 +53,27 @@ jobs:
             cat CNDomains_AdguardHome.txt
           } > dns_upstream_merged.txt
 
-          # 5. 覆盖到仓库根目录
+          # 5. 【新增】生成 MosDNS 专用纯文本列表 (仅提取中国域名)
+          # 原理：从 CNDomains_AdguardHome.txt 中提取 [/domain/] 格式中的域名
+          # 并将 / 替换为换行，确保 MosDNS domain_set 可以读取
+          grep -oP '(?<=\[/).*(?=/\])' CNDomains_AdguardHome.txt | tr '/' '\n' | sort -u > mosdns_china_list.txt
+
+          # 6. 覆盖到仓库根目录
           cp dns_upstream_merged.txt ../AdguardHome_Upstreams_Autoupdate.txt
           cp dns_upstream_merged.txt ../AdguardHome_Upstreams_Autoupdate.yaml
+          cp mosdns_china_list.txt ../mosdns_china_list.txt
 
-          # 6. 二次清理
+          # 7. 二次清理
           rm -f accelerated-domains.china.conf CNDomains_AdguardHome.txt \
               gfwlist.txt gfwlist_decode.txt gfwlist2dnsmasq.sh \
-              gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt
+              gfwlist_dnsmasq.conf gfwlist_AdguardHome.txt dns_upstream_merged.txt \
+              mosdns_china_list.txt
 
       - name: Commit and Push
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
-          # 只有在有变化时才 commit，避免没有更新时报错
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to commit"
           else
